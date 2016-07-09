@@ -1,21 +1,13 @@
 #include <ESP8266mDNS.h>
-
-
 #include <Arduino.h>
-
-//#ifdef ESP8266
-//extern "C" {
-//#include "user_interface.h"
-//}
-//#endif
-
 #include <SoftwareSerial.h>
 #include <ESP8266HTTPClient.h>
 #include <DNSServer.h>            //Local DNS Server used for redirecting all requests to the configuration portal
 #include <ESP8266WebServer.h>     //Local WebServer used to serve the configuration portal
 #include <ESP8266mDNS.h>
 #include <WiFiManager.h>
-#include "WString.h"
+#include <WiFiUdp.h>
+#include <ArduinoOTA.h>
 
 #define BUFSIZE 1024
 
@@ -117,31 +109,12 @@ void debug(const char* msg) {
   Serial.println(msg);
 }
 
-//void goToSleep() {
-//  debug("Going to sleep for 60 seconds");
-//  ESP.deepSleep(60000000, WAKE_RF_DEFAULT); // Sleep for 60 seconds
-//  delay(100); // not sure if this is needed, but just in case...
-//  //    wifi_set_sleep_type(LIGHT_SLEEP_T);
-//  //    delay(60000); // 60s
-//}
-
-//void flash(int repetitions, int dutyCycle) {
-//  //  digitalWrite(12,HIGH);
-//  delay(dutyCycle);
-//  //  digitalWrite(2,LOW);
-//  delay(dutyCycle);
-//}
-//
-//void flash() {
-//  flash(1, 500);
-//}
-
 void setup() {
   pinMode(P1_RX, INPUT);
   swSer.begin(115200);
   pinMode(P1_RTS, OUTPUT);
   //digitalWrite(P1_RX,LOW);
-  Serial.begin(74880);
+  Serial.begin(115200);
   //Serial.setDebugOutput(true);
   debug("\nP1 Recorder booted or woke up");
 
@@ -155,6 +128,7 @@ void setup() {
   Serial.println("WiFi connected");
 
   if ( MDNS.begin ( "p1meter" ) ) {
+    MDNS.addService("http", "tcp", 80);
     Serial.println ( "MDNS responder started" );
   }
   server.on ( "/", handleRoot );
@@ -163,6 +137,25 @@ void setup() {
   server.onNotFound ( handleNotFound );
   server.begin();
   Serial.println ( "HTTP server started" );
+
+  ArduinoOTA.onStart([]() {
+    Serial.println("Start");
+  });
+  ArduinoOTA.onEnd([]() {
+    Serial.println("\nEnd");
+  });
+  ArduinoOTA.onProgress([](unsigned int progress, unsigned int total) {
+    Serial.printf("Progress: %u%%\r", (progress / (total / 100)));
+  });
+  ArduinoOTA.onError([](ota_error_t error) {
+    Serial.printf("Error[%u]: ", error);
+    if (error == OTA_AUTH_ERROR) Serial.println("Auth Failed");
+    else if (error == OTA_BEGIN_ERROR) Serial.println("Begin Failed");
+    else if (error == OTA_CONNECT_ERROR) Serial.println("Connect Failed");
+    else if (error == OTA_RECEIVE_ERROR) Serial.println("Receive Failed");
+    else if (error == OTA_END_ERROR) Serial.println("End Failed");
+  });
+  ArduinoOTA.begin();
 }
 
 
@@ -179,20 +172,14 @@ void loop() {
     }
   }
   server.handleClient();
+  ArduinoOTA.handle();
   //goToSleep();
 }
 
 void postTelegram() {
-//  if (WiFi.status() == WL_CONNECTED) {
-//    debug("Wifi connected");
     HTTPClient http;
-//    debug("[HTTP] begin...\n");
     http.begin("http://192.168.0.184:8000/post"); //HTTP
     http.addHeader("Content-Type", "text/plain");
-//    Serial.println(">>>>>>> BODY --------");
-//    Serial.println(String((char *)telegram));
-//    Serial.println("<<<<<<< BODY --------");
-//    debug("[HTTP] POST...\n");
     // start connection and send HTTP header
     int httpCode = http.POST(telegram, telegrampos);
     http.writeToStream(&Serial);
@@ -208,14 +195,10 @@ void postTelegram() {
       Serial.printf("[HTTP] POST... failed, error: %s\n", http.errorToString(httpCode).c_str());
     }
     http.end();
-//  } else {
-//    Serial.println("Wifi not connected");
-//  }
 }
 
 void postFailure() {
   HTTPClient http;
-//  debug("[HTTP] begin...\n");
   // configure traged server and url
   http.begin("http://192.168.0.98:8080/post"); //HTTP
   http.addHeader("Content-Type", "text/plain");
